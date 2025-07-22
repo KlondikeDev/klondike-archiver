@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="Klondike Archiver" Language="1033" Version="1.0.0.0" 
+           Manufacturer="Your Company" UpgradeCode="1B2F5C8D-9E3A-4B7C-8F1D-6A5E9B2C4D7F">
+    
+    <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
+    
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    
+    <MediaTemplate EmbedCab="yes" />
+    
+    <Feature Id="ProductFeature" Title="Klondike Archiver" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+      <ComponentRef Id="FileAssociation" />
+    </Feature>
+    
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <UIRef Id="WixUI_InstallDir" />
+    
+    <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
+    <WixVariable Id="WixUIDialogBmp" Value="dialog.bmp" />
+    <WixVariable Id="WixUIBannerBmp" Value="banner.bmp" />
+    
+    <Icon Id="app.ico" SourceFile="klondike_icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="app.ico" />
+    
+  </Product>
+  
+  <Fragment>
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="Klondike Archiver" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="Klondike Archiver"/>
+      </Directory>
+      <Directory Id="DesktopFolder" Name="Desktop" />
+    </Directory>
+  </Fragment>
+  
+  <Fragment>
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Component Id="KlondikeArchiver.exe" Guid="F8D5C2A1-3B7E-4F9C-8D2A-1E6B9F5C3A8D">
+        <File Id="KCrinkle.exe" Source="dist\KCrinkle.exe" KeyPath="yes">
+          <Shortcut Id="ApplicationStartMenuShortcut" Name="Klondike Archiver" 
+                    Directory="ApplicationProgramsFolder" WorkingDirectory="INSTALLFOLDER"
+                    Icon="app.ico" IconIndex="0" Advertise="yes" />
+          <Shortcut Id="ApplicationDesktopShortcut" Name="Klondike Archiver" 
+                    Directory="DesktopFolder" WorkingDirectory="INSTALLFOLDER"
+                    Icon="app.ico" IconIndex="0" Advertise="yes" />
+        </File>
+      </Component>
+      <Component Id="AppIcon" Guid="A1B2C3D4-E5F6-7890-1234-567890ABCDEF">
+        <File Id="klondike_icon.ico" Source="klondike_icon.ico" />
+      </Component>
+      <Component Id="FileIcon" Guid="B2C3D4E5-F6G7-8901-2345-67890ABCDEF1">
+        <File Id="kc_file_icon.ico" Source="kc_file_icon.ico" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+  
+  <Fragment>
+    <Component Id="FileAssociation" Directory="INSTALLFOLDER" Guid="C3D4E5F6-G7H8-9012-3456-7890ABCDEF12">
+      <RegistryValue Root="HKCR" Key=".kc" Value="KlondikeArchive" Type="string" />
+      <RegistryValue Root="HKCR" Key="KlondikeArchive" Value="Klondike Crinkle Archive" Type="string" />
+      <RegistryValue Root="HKCR" Key="KlondikeArchive\DefaultIcon" Value="[INSTALLFOLDER]kc_file_icon.ico" Type="string" />
+      <RegistryValue Root="HKCR" Key="KlondikeArchive\shell\open\command" Value="&quot;[INSTALLFOLDER]KCrinkle.exe&quot; &quot;%1&quot;" Type="string" />
+      <RegistryValue Root="HKCR" Key="KlondikeArchive\shell\uncrinkle" Value="Uncrinkle with KC" Type="string" />
+      <RegistryValue Root="HKCR" Key="KlondikeArchive\shell\uncrinkle\command" Value="&quot;[INSTALLFOLDER]KCrinkle.exe&quot; &quot;%1&quot;" Type="string" />
+    </Component>
+  </Fragment>
+  
+</Wix>
