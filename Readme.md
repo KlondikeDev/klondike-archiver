@@ -8,4 +8,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 NOTICE:
 ---
-This program likes to hang with larger files, this will be fixed in the next release.
+This program triggers Windows Defender SmartScreen, this will likely remain until the program gains reputation.
