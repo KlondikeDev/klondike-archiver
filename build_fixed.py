@@ -66,12 +66,12 @@ def create_inno_script():
     # Get current directory for paths
     current_dir = Path.cwd().resolve()
     
-    inno_script = '''[Setup]
+    inno_script = r'''[Setup]
 AppId={{1B2F5C8D-9E3A-4B7C-8F1D-6A5E9B2C4D7F}
 AppName=Klondike Archiver
 AppVersion=1.0.0
 AppVerName=Klondike Archiver 1.0.0
-AppPublisher=Klondike Corporation
+AppPublisher=Klondike Software
 DefaultDirName={autopf}\Klondike Archiver
 DefaultGroupName=Klondike Archiver
 AllowNoIcons=yes
