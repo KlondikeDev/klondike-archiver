@@ -332,28 +332,47 @@ class KlondikeArchiver:
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
     
-    def setup_drop_zones(self):
-        """Set up visual feedback for drag and drop zones"""
-        # Add drop zone styling to the archive tree
-        style = ttk.Style()
-        style.configure('DropZone.Treeview', background='#e8f4f8')
-        
-        # Bind drag enter/leave events for visual feedback
-        try:
-            self.archive_tree.dnd_bind('<<DragEnter>>', self.on_drag_enter)
-            self.archive_tree.dnd_bind('<<DragLeave>>', self.on_drag_leave)
-        except:
-            pass
+def setup_drop_zones(self):
+    """Set up visual feedback for drag and drop zones"""
+    # Create a more subtle style that doesn't affect sizing
+    style = ttk.Style()
+    # Use background color change only, keep same padding/dimensions
+    current_bg = style.lookup('Treeview', 'background')
+    style.configure('DropZone.Treeview', 
+                   background='#e8f4f8',
+                   fieldbackground='#e8f4f8')
     
+    # Bind drag enter/leave events for visual feedback
+    try:
+        self.archive_tree.dnd_bind('<<DragEnter>>', self.on_drag_enter)
+        self.archive_tree.dnd_bind('<<DragLeave>>', self.on_drag_leave)
+    except:
+        pass
+
     def on_drag_enter(self, event):
         """Visual feedback when dragging enters the drop zone"""
-        # Only change style temporarily, don't affect layout
-        self.archive_tree.configure(style='DropZone.Treeview')
+        # More subtle visual feedback that doesn't affect layout
+        original_bg = self.archive_tree.cget('background')
+        self.archive_tree.configure(background='#e8f4f8')
         self.status_var.set("🎯 Drop files here to add them to the archive!")
-    
+
     def on_drag_leave(self, event):
         """Remove visual feedback when dragging leaves the drop zone"""
-        self.archive_tree.configure(style='')
+        # Reset to original background
+        style = ttk.Style()
+        original_bg = style.lookup('Treeview', 'background')
+        self.archive_tree.configure(background=original_bg)
+        self.status_var.set("Ready to work with your archive")
+
+# Alternative: Use border highlight instead of background
+    def on_drag_enter_alternative(self, event):
+        """Alternative visual feedback using border"""
+        self.archive_tree.configure(relief='solid', borderwidth=2)
+        self.status_var.set("🎯 Drop files here to add them to the archive!")
+
+    def on_drag_leave_alternative(self, event):
+        """Remove border feedback"""
+        self.archive_tree.configure(relief='sunken', borderwidth=1)
         self.status_var.set("Ready to work with your archive")
     
     def start_file_drag(self, event):
@@ -553,27 +572,22 @@ class KlondikeArchiver:
         try:
             # Try to find icon file in the same directory as the script
             if getattr(sys, 'frozen', False):
-                # If running as exe
                 application_path = Path(sys.executable).parent
             else:
-                # If running as script
                 application_path = Path(__file__).parent
-            
+
             icon_path = application_path / "klondike_icon.ico"
-            
+
             if icon_path.exists():
                 self.root.iconbitmap(str(icon_path))
             else:
-                # Fallback: create a simple icon using tkinter
                 self.create_fallback_icon()
         except Exception:
-            # If all else fails, just use default
             pass
-    
+
     def create_fallback_icon(self):
         """Create a simple fallback icon using tkinter"""
         try:
-            # Create a simple icon using PhotoImage
             icon_data = '''
                 R0lGODlhEAAQAPIAAAAAAP//AP8A/wAA//8AAP//////////////yH5BAEKAAcALAAAAAAQABAAAAM2eLrc/jDKSWu4OOvNu/9gKI5kSZ5oqqJsC8fyTNf2jef6zvf+DwwKh8Si8YhMKpfMpnNKbTYAADs=
             '''
@@ -851,23 +865,29 @@ class KlondikeArchiver:
         """Refresh the file browser list"""
         self.file_listbox.delete(0, tk.END)
         self.current_path_var.set(str(self.current_directory))
-        
+
         try:
             if self.current_directory.parent != self.current_directory:
                 self.file_listbox.insert(tk.END, "📁 ..")
-            
+
             for item in sorted(self.current_directory.iterdir()):
-                if item.is_dir():
-                    if self.show_hidden_var.get() or not item.name.startswith('.'):
-                        self.file_listbox.insert(tk.END, f"📁 {item.name}")
-            
+                try:
+                    if item.is_dir():
+                        if self.show_hidden_var.get() or not item.name.startswith('.'):
+                            self.file_listbox.insert(tk.END, f"📁 {item.name}")
+                except PermissionError:
+                    continue  # Skip inaccessible folders
+
             for item in sorted(self.current_directory.iterdir()):
-                if item.is_file():
-                    if self.show_hidden_var.get() or not item.name.startswith('.'):
-                        size = item.stat().st_size
-                        size_str = self.format_file_size(size)
-                        self.file_listbox.insert(tk.END, f"📄 {item.name} ({size_str})")
-                        
+                try:
+                    if item.is_file():
+                        if self.show_hidden_var.get() or not item.name.startswith('.'):
+                            size = item.stat().st_size
+                            size_str = self.format_file_size(size)
+                            self.file_listbox.insert(tk.END, f"📄 {item.name} ({size_str})")
+                except PermissionError:
+                    continue  # Skip inaccessible files
+
         except PermissionError:
             self.file_listbox.insert(tk.END, "❌ Permission denied")
             self.status_var.set("Cannot access this directory")
@@ -1047,7 +1067,7 @@ class KlondikeArchiver:
                 
                 for i, (relative_name, file_path) in enumerate(files_to_add):
                     try:
-                        progress = (i / total_files) * 100
+                        progress = (i / total_files) + 50
                         self.root.after(0, lambda p=progress, name=file_path.name: 
                                         self.update_progress(p, f"Processing {name}..."))
 
