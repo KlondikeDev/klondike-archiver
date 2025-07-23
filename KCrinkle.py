@@ -9,6 +9,7 @@ import zlib
 import tempfile
 from pathlib import Path
 from collections import defaultdict
+from tkinterdnd2 import DND_FILES, TkinterDnD
 
 COMPRESSED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.mp3', '.mp4', '.avi', '.mkv', '.zip', '.rar', '.7z', '.gz', '.exe', '.dll', '.pdf', '.apk', '.webp'}
 
@@ -155,6 +156,7 @@ class KlondikeArchiver:
         # Configure style
         self.setup_styles()
         self.setup_ui()
+        self.setup_drag_drop()  # NEW: Set up drag and drop
         self.refresh_file_list()
         
         # Bind window close event
@@ -168,6 +170,366 @@ class KlondikeArchiver:
             file_to_open = sys.argv[1]
             if file_to_open.endswith('.kc') and Path(file_to_open).exists():
                 self.root.after(100, lambda: self.open_specific_archive(file_to_open))
+    
+    def setup_drag_drop(self):
+        """Set up drag and drop functionality"""
+        try:
+            # Enable drag and drop on the main window and archive tree
+            self.root.drop_target_register(DND_FILES)
+            self.root.dnd_bind('<<Drop>>', self.handle_drop)
+            
+            # Also enable on the archive tree specifically
+            self.archive_tree.drop_target_register(DND_FILES)
+            self.archive_tree.dnd_bind('<<Drop>>', self.handle_drop)
+            
+            # Enable internal drag and drop from file listbox to archive tree
+            self.setup_internal_drag_drop()
+            
+            # Add visual feedback for drag and drop zones
+            self.setup_drop_zones()
+            
+        except Exception as e:
+            # If tkinterdnd2 is not available, show a message but continue
+            print(f"Drag and drop not available: {e}")
+            self.status_var.set("Note: Install tkinterdnd2 for drag and drop support")
+    
+    def setup_internal_drag_drop(self):
+        """Set up internal drag and drop between file browser and archive"""
+        # Bind mouse events for internal drag and drop
+        self.file_listbox.bind("<Button-1>", self.on_file_listbox_click)
+        self.file_listbox.bind("<B1-Motion>", self.on_file_listbox_drag)
+        self.file_listbox.bind("<ButtonRelease-1>", self.on_file_listbox_release)
+        
+        # Track drag state
+        self.drag_start_x = None
+        self.drag_start_y = None
+        self.is_dragging = False
+        self.drag_data = None
+    
+    def on_file_listbox_click(self, event):
+        """Handle initial click on file listbox"""
+        self.drag_start_x = event.x
+        self.drag_start_y = event.y
+        self.is_dragging = False
+        self.drag_data = None
+        
+        # Get clicked item
+        index = self.file_listbox.nearest(event.y)
+        if index >= 0:
+            item_text = self.file_listbox.get(index)
+            if item_text.startswith("📄"):
+                filename = item_text[2:].split(" (")[0].strip()
+                file_path = self.current_directory / filename
+                if file_path.exists() and file_path.is_file():
+                    self.drag_data = [(filename, file_path)]
+    
+    def on_file_listbox_drag(self, event):
+        """Handle dragging from file listbox"""
+        if self.drag_start_x is None or self.drag_start_y is None:
+            return
+        
+        # Check if we've moved enough to start a drag
+        if not self.is_dragging:
+            distance = ((event.x - self.drag_start_x) ** 2 + (event.y - self.drag_start_y) ** 2) ** 0.5
+            if distance > 5:  # Start drag after 5 pixels
+                self.is_dragging = True
+                if self.drag_data:
+                    self.file_listbox.configure(cursor="hand2")
+                    self.status_var.set("🎯 Drag to archive panel to add files!")
+    
+    def on_file_listbox_release(self, event):
+        """Handle release after potential drag"""
+        if self.is_dragging and self.drag_data:
+            # Check if released over archive tree
+            archive_bbox = self.archive_tree.bbox("")
+            if archive_bbox:
+                tree_x = self.archive_tree.winfo_rootx()
+                tree_y = self.archive_tree.winfo_rooty()
+                tree_width = self.archive_tree.winfo_width()
+                tree_height = self.archive_tree.winfo_height()
+                
+                release_x = event.x_root
+                release_y = event.y_root
+                
+                if (tree_x <= release_x <= tree_x + tree_width and 
+                    tree_y <= release_y <= tree_y + tree_height):
+                    # Dropped on archive tree - add files
+                    self.add_internal_drag_files()
+        
+        # Reset drag state
+        self.file_listbox.configure(cursor="")
+        self.is_dragging = False
+        self.drag_start_x = None
+        self.drag_start_y = None
+        if not self.is_dragging:
+            self.status_var.set("Ready to work with your archive")
+    
+    def add_internal_drag_files(self):
+        """Add files from internal drag operation"""
+        if not self.drag_data:
+            return
+        
+        def worker():
+            try:
+                self.root.after(0, lambda: self.show_progress("Adding dragged files..."))
+                added_count = 0
+                
+                for i, (filename, file_path) in enumerate(self.drag_data):
+                    try:
+                        progress = (i / len(self.drag_data)) * 100
+                        self.root.after(0, lambda p=progress, name=filename:
+                                        self.update_progress(p, f"Processing {name}..."))
+                        
+                        file_size = file_path.stat().st_size
+                        
+                        with open(file_path, 'rb') as f:
+                            file_data = f.read()
+                        
+                        if should_compress(filename):
+                            compressed_data = OptimizedCompression.compress_smart(file_data)
+                        else:
+                            compressed_data = b'\x00' + file_data
+                        
+                        original_size = len(file_data)
+                        compressed_size = len(compressed_data)
+                        
+                        def add_metadata():
+                            self._add_file_metadata(filename, file_path, original_size, compressed_size)
+                        
+                        self.root.after(0, add_metadata)
+                        
+                        if file_size > OptimizedCompression.LARGE_CHUNK:
+                            temp_file = self.temp_dir / f"{filename}.tmp"
+                            with open(temp_file, 'wb') as f:
+                                f.write(compressed_data)
+                        
+                        added_count += 1
+                        
+                        del file_data
+                        del compressed_data
+                        
+                    except Exception as e:
+                        self.root.after(0, lambda err=str(e), name=filename:
+                                      messagebox.showerror("Error", f"Failed to add {name}: {err}"))
+                
+                def on_complete():
+                    self.hide_progress()
+                    if added_count > 0:
+                        self.mark_unsaved_changes()
+                        self.refresh_archive_tree()
+                        self.update_archive_info()
+                        self.status_var.set(f"✅ Added {added_count} file(s) via drag and drop!")
+                
+                self.root.after(0, on_complete)
+                
+            except Exception as e:
+                def on_error():
+                    self.hide_progress()
+                    messagebox.showerror("Drag Error", f"Failed to add dragged files: {e}")
+                
+                self.root.after(0, on_error)
+        
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+    
+    def setup_drop_zones(self):
+        """Set up visual feedback for drag and drop zones"""
+        # Add drop zone styling to the archive tree
+        style = ttk.Style()
+        style.configure('DropZone.Treeview', background='#e8f4f8')
+        
+        # Bind drag enter/leave events for visual feedback
+        try:
+            self.archive_tree.dnd_bind('<<DragEnter>>', self.on_drag_enter)
+            self.archive_tree.dnd_bind('<<DragLeave>>', self.on_drag_leave)
+        except:
+            pass
+    
+    def on_drag_enter(self, event):
+        """Visual feedback when dragging enters the drop zone"""
+        # Only change style temporarily, don't affect layout
+        self.archive_tree.configure(style='DropZone.Treeview')
+        self.status_var.set("🎯 Drop files here to add them to the archive!")
+    
+    def on_drag_leave(self, event):
+        """Remove visual feedback when dragging leaves the drop zone"""
+        self.archive_tree.configure(style='')
+        self.status_var.set("Ready to work with your archive")
+    
+    def start_file_drag(self, event):
+        """Start dragging files from the file listbox"""
+        # This method is no longer used - replaced with internal drag system
+        pass
+    
+    def end_file_drag(self, event):
+        """Clean up after drag operation"""
+        # This method is no longer used - replaced with internal drag system
+        pass
+    
+    def handle_drop(self, event):
+        """Handle dropped files and folders"""
+        # Remove visual feedback
+        self.archive_tree.configure(style='')
+        
+        # Get the dropped files
+        files = self.root.tk.splitlist(event.data)
+        
+        if not files:
+            return
+        
+        # Filter and categorize dropped items
+        files_to_add = []
+        folders_to_add = []
+        
+        for file_path in files:
+            path = Path(file_path)
+            if path.exists():
+                if path.is_file():
+                    files_to_add.append(path)
+                elif path.is_dir():
+                    folders_to_add.append(path)
+        
+        # Process the dropped items
+        if files_to_add or folders_to_add:
+            self.process_dropped_items(files_to_add, folders_to_add)
+        else:
+            messagebox.showwarning("Invalid Drop", "No valid files or folders were dropped.")
+    
+    def process_dropped_items(self, files, folders):
+        """Process dropped files and folders"""
+        def worker():
+            try:
+                total_items = len(files) + len(folders)
+                processed_files = 0
+                
+                self.root.after(0, lambda: self.show_progress("Processing dropped items..."))
+                
+                # Process individual files first
+                for i, file_path in enumerate(files):
+                    try:
+                        progress = (i / total_items) * 50  # First 50% for individual files
+                        self.root.after(0, lambda p=progress, name=file_path.name:
+                                        self.update_progress(p, f"Adding {name}..."))
+                        
+                        file_size = file_path.stat().st_size
+                        
+                        with open(file_path, 'rb') as f:
+                            file_data = f.read()
+                        
+                        # Compress based on file type
+                        if should_compress(file_path.name):
+                            compressed_data = OptimizedCompression.compress_smart(file_data)
+                        else:
+                            compressed_data = b'\x00' + file_data
+                        
+                        # Store metadata
+                        original_size = len(file_data)
+                        compressed_size = len(compressed_data)
+                        
+                        def add_file_metadata():
+                            self._add_file_metadata(file_path.name, file_path, original_size, compressed_size)
+                        
+                        self.root.after(0, add_file_metadata)
+                        
+                        # Save large files to temp directory
+                        if file_size > OptimizedCompression.LARGE_CHUNK:
+                            temp_file = self.temp_dir / f"{file_path.name}.tmp"
+                            with open(temp_file, 'wb') as f:
+                                f.write(compressed_data)
+                        
+                        processed_files += 1
+                        
+                        # Clean up memory
+                        del file_data
+                        del compressed_data
+                        
+                    except Exception as e:
+                        self.root.after(0, lambda err=str(e), name=file_path.name:
+                                      messagebox.showerror("Error", f"Failed to add {name}: {err}"))
+                
+                # Process folders
+                for i, folder_path in enumerate(folders):
+                    try:
+                        base_progress = 50 + (i / len(folders)) * 50  # Second 50% for folders
+                        self.root.after(0, lambda p=base_progress, name=folder_path.name:
+                                        self.update_progress(p, f"Processing folder {name}..."))
+                        
+                        # Collect all files in the folder
+                        folder_files = []
+                        for file_path in folder_path.rglob('*'):
+                            if file_path.is_file():
+                                relative_path = file_path.relative_to(folder_path.parent)
+                                folder_files.append((str(relative_path), file_path))
+                        
+                        # Process each file in the folder
+                        for j, (relative_name, file_path) in enumerate(folder_files):
+                            try:
+                                file_progress = base_progress + (j / len(folder_files)) * (50 / len(folders))
+                                self.root.after(0, lambda p=file_progress, name=file_path.name:
+                                              self.update_progress(p, f"Adding {name}..."))
+                                
+                                file_size = file_path.stat().st_size
+                                
+                                with open(file_path, 'rb') as f:
+                                    file_data = f.read()
+                                
+                                if should_compress(relative_name):
+                                    compressed_data = OptimizedCompression.compress_smart(file_data)
+                                else:
+                                    compressed_data = b'\x00' + file_data
+                                
+                                original_size = len(file_data)
+                                compressed_size = len(compressed_data)
+                                
+                                def add_folder_file_metadata():
+                                    self._add_file_metadata(relative_name, file_path, original_size, compressed_size)
+                                
+                                self.root.after(0, add_folder_file_metadata)
+                                
+                                # Save large files to temp directory
+                                if file_size > OptimizedCompression.LARGE_CHUNK:
+                                    temp_file = self.temp_dir / f"{relative_name.replace('/', '_').replace('\\', '_')}.tmp"
+                                    temp_file.parent.mkdir(parents=True, exist_ok=True)
+                                    with open(temp_file, 'wb') as f:
+                                        f.write(compressed_data)
+                                
+                                processed_files += 1
+                                
+                                # Clean up memory
+                                del file_data
+                                del compressed_data
+                                
+                            except Exception as e:
+                                self.root.after(0, lambda err=str(e), name=relative_name:
+                                              messagebox.showerror("Error", f"Failed to add {name}: {err}"))
+                        
+                    except Exception as e:
+                        self.root.after(0, lambda err=str(e), name=folder_path.name:
+                                      messagebox.showerror("Error", f"Failed to process folder {name}: {err}"))
+                
+                def on_complete():
+                    self.hide_progress()
+                    if processed_files > 0:
+                        self.mark_unsaved_changes()
+                        self.refresh_archive_tree()
+                        self.update_archive_info()
+                        
+                        item_count = len(files) + len(folders)
+                        self.status_var.set(f"🎯 Successfully added {processed_files} files from {item_count} dropped item(s)!")
+                    else:
+                        self.status_var.set("No files were added to the archive")
+                
+                self.root.after(0, on_complete)
+                
+            except Exception as e:
+                def on_error():
+                    self.hide_progress()
+                    messagebox.showerror("Drop Error", f"Failed to process dropped items: {e}")
+                
+                self.root.after(0, on_error)
+        
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
     
     def _init_temp_dir(self):
         """Initialize temporary directory for large file operations"""
@@ -266,7 +628,7 @@ class KlondikeArchiver:
         header_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 20))
         header_frame.columnconfigure(1, weight=1)
         
-        title_label = ttk.Label(header_frame, text="Klondike Archiver (Optimized)", 
+        title_label = ttk.Label(header_frame, text="Klondike Archiver (Optimized + Drag & Drop)", 
                                font=("Segoe UI", 20, "bold"))
         title_label.grid(row=0, column=0, sticky=tk.W)
         
@@ -293,14 +655,21 @@ class KlondikeArchiver:
         ttk.Button(file_ops_frame, text="💾 Save As", command=self.save_archive_as, 
                   style='Action.TButton').pack(side=tk.LEFT, padx=5)
         
-        # Quick stats
-        self.stats_frame = ttk.LabelFrame(toolbar_frame, text="📊 Statistics", padding="10")
-        self.stats_frame.pack(side=tk.RIGHT, padx=(10, 0))
+        # Quick stats (fixed width to prevent resizing)
+        self.stats_frame = ttk.LabelFrame(toolbar_frame, text="📊 Statistics", padding="5")
+        self.stats_frame.pack(side=tk.RIGHT, padx=(10, 0), fill=tk.Y)
+        
+        # Create a container with fixed size
+        stats_container = ttk.Frame(self.stats_frame, width=180, height=60)
+        stats_container.pack()
+        stats_container.pack_propagate(False)  # Prevent automatic resizing
         
         self.stats_var = tk.StringVar()
         self.stats_var.set("No files")
-        ttk.Label(self.stats_frame, textvariable=self.stats_var, 
-                 font=("Segoe UI", 9, "bold")).pack()
+        stats_label = ttk.Label(stats_container, textvariable=self.stats_var, 
+                               font=("Segoe UI", 8, "bold"), justify=tk.CENTER,
+                               wraplength=170, anchor=tk.CENTER)
+        stats_label.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
         
         # Main workspace
         workspace = ttk.Frame(main_frame)
@@ -373,21 +742,27 @@ class KlondikeArchiver:
                   style='Action.TButton').grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
         
         # Right panel - Archive contents
-        right_panel = ttk.LabelFrame(workspace, text="📦 Archive Contents", padding="15")
+        right_panel = ttk.LabelFrame(workspace, text="📦 Archive Contents (Drag files here!)", padding="15")
         right_panel.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
         right_panel.columnconfigure(0, weight=1)
         right_panel.rowconfigure(1, weight=1)
         
-        # Archive info banner
-        self.archive_banner = ttk.Frame(right_panel, relief='sunken', borderwidth=1)
-        self.archive_banner.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
+        # Archive info banner (fixed height to prevent resizing)
+        banner_container = ttk.Frame(right_panel, height=45)
+        banner_container.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
+        banner_container.grid_propagate(False)  # Prevent automatic resizing
+        banner_container.columnconfigure(0, weight=1)
+        
+        self.archive_banner = ttk.Frame(banner_container, relief='sunken', borderwidth=1)
+        self.archive_banner.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=2, pady=2)
         self.archive_banner.columnconfigure(0, weight=1)
+        self.archive_banner.rowconfigure(0, weight=1)
         
         self.banner_text = tk.StringVar()
-        self.banner_text.set("📭 Archive is empty - add some files!")
+        self.banner_text.set("📭 Archive is empty - add files or drag & drop!")
         banner_label = ttk.Label(self.archive_banner, textvariable=self.banner_text, 
-                                font=("Segoe UI", 10), padding="10")
-        banner_label.grid(row=0, column=0)
+                                font=("Segoe UI", 9), wraplength=450, justify=tk.CENTER)
+        banner_label.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=8, pady=5)
         
         # Archive tree
         tree_frame = ttk.Frame(right_panel)
@@ -442,7 +817,7 @@ class KlondikeArchiver:
         status_frame.columnconfigure(0, weight=1)
         
         self.status_var = tk.StringVar()
-        self.status_var.set("🎯 Ready! Browse files on the left and add them to your archive")
+        self.status_var.set("🎯 Ready! Browse files on the left, use buttons, or drag & drop files anywhere!")
         
         status_bar = ttk.Label(status_frame, textvariable=self.status_var, 
                              relief=tk.SUNKEN, padding="8", font=("Segoe UI", 9))
@@ -932,7 +1307,7 @@ class KlondikeArchiver:
         self.archive_tree.delete(*self.archive_tree.get_children())
         
         if not self.archive_metadata:
-            self.banner_text.set("📭 Archive is empty - add some files!")
+            self.banner_text.set("📭 Archive is empty - add files or drag & drop!")
             return
         
         total_original = 0
@@ -1331,6 +1706,14 @@ class KlondikeArchiver:
         thread.start()
 
 if __name__ == "__main__":
-    root = tk.Tk()
+    try:
+        # Use TkinterDnD root for drag and drop support
+        root = TkinterDnD.Tk()
+    except:
+        # Fallback to regular Tk if tkinterdnd2 is not available
+        print("Warning: tkinterdnd2 not found. Drag and drop will not be available.")
+        print("To enable drag and drop, install tkinterdnd2: pip install tkinterdnd2")
+        root = tk.Tk()
+    
     app = KlondikeArchiver(root)
     root.mainloop()
